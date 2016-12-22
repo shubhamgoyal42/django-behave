@@ -33,6 +33,7 @@ except ImportError:
     from django.db.models import get_app
 
 import unittest
+from django.conf import settings
 from django.utils import six
 from django.utils.six.moves import xrange
 
@@ -145,6 +146,9 @@ class DjangoBehaveTestCase(LiveServerTestCase):
         self.option_info = kwargs.pop('option_info')
         super(DjangoBehaveTestCase, self).__init__(**kwargs)
 
+    def __hash__(self):
+        return hash((type(self), self._testMethodName, self.features_dir))
+
     def get_features_dir(self):
         if isinstance(self.features_dir, six.string_types):
             return [self.features_dir]
@@ -225,25 +229,27 @@ class DjangoBehaveTestSuiteRunner(BaseRunner):
     def make_bdd_test_suite(self, features_dir):
         return DjangoBehaveTestCase(features_dir=features_dir, option_info=self.option_info)
 
-    def build_suite(self, test_labels, extra_tests=None, **kwargs):
-        extra_tests = extra_tests or []
-        #
-        # Add BDD tests to the extra_tests
-        #
+    def get_features_dirs(self, test_labels):
+        if not test_labels:
+            test_labels = settings.INSTALLED_APPS
 
-        # always get all features for given apps (for convenience)
         for label in test_labels:
             if '.' in label:
-                print("Ignoring label with dot in: %s" % label)
-                continue
-            app = get_app(label)
+                short_label = label.split('.')[-1]
+            else:
+                short_label = None
 
-            # Check to see if a separate 'features' module exists,
-            # parallel to the models module
+            app = get_app(short_label or label)
+
             features_dir = get_features(app)
             if features_dir is not None:
-                # build a test suite for this directory
-                extra_tests.append(self.make_bdd_test_suite(features_dir))
+                yield features_dir
+
+    def build_suite(self, test_labels, extra_tests=None, **kwargs):
+        extra_tests = extra_tests or []
+
+        for features_dir in self.get_features_dirs(test_labels):
+            extra_tests.append(self.make_bdd_test_suite(features_dir))
 
         return super(DjangoBehaveTestSuiteRunner, self
                      ).build_suite(test_labels, extra_tests, **kwargs)
@@ -260,15 +266,8 @@ class DjangoBehaveOnlyTestSuiteRunner(DjangoBehaveTestSuiteRunner):
     def build_suite(self, test_labels, extra_tests=None, **kwargs):
         suite = unittest.TestSuite()
 
-        for label in test_labels:
-            if '.' in label:
-                print("Ignoring label with dot in: %s" % label)
-                continue
-            app = get_app(label)
-
-            features_dir = get_features(app)
-            if features_dir is not None:
-                suite.addTest(self.make_bdd_test_suite(features_dir))
+        for features_dir in self.get_features_dirs(test_labels):
+            suite.addTest(self.make_bdd_test_suite(features_dir))
 
         return reorder_suite(suite, (unittest.TestCase,))
 
